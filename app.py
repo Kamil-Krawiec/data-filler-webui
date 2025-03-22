@@ -1,6 +1,6 @@
 import streamlit as st
 import json
-
+from config import sql_script as default_sql
 from parsing import parse_create_tables
 from filling import DataGenerator
 
@@ -8,43 +8,19 @@ from filling import DataGenerator
 def main():
     st.title("Data Filler Web UI")
 
-    st.write(
+    #
+    # -----------------------------------------------------------
+    # STEP 1: SQL Script Input
+    # -----------------------------------------------------------
+    st.markdown(
         """
-        **Step 1**: Paste or modify your SQL CREATE script below, then click **Parse SQL**.
-        Once it’s successfully parsed, additional configuration steps will appear.
+        **Step 1**: Paste or modify your **SQL CREATE script** below, then click
+        **Parse SQL**. Once it’s successfully parsed, additional configuration steps will appear.
         """
     )
-
-    # ----------------------------------------------------------------
-    # STEP 1: SQL Script input
-    # ----------------------------------------------------------------
     if "tables_parsed" not in st.session_state:
         st.session_state["tables_parsed"] = None
 
-    default_sql = """\
-CREATE TABLE Authors (
-    author_id SERIAL PRIMARY KEY,
-    sex CHAR(1) NOT NULL,
-    first_name VARCHAR(50) NOT NULL,
-    last_name VARCHAR(50) NOT NULL,
-    birth_date DATE NOT NULL
-);
-
-CREATE TABLE Categories (
-    category_id SERIAL PRIMARY KEY,
-    category_name VARCHAR(50) NOT NULL UNIQUE
-);
-
-CREATE TABLE Books (
-    book_id SERIAL PRIMARY KEY,
-    title VARCHAR(100) NOT NULL,
-    isbn VARCHAR(13) NOT NULL UNIQUE,
-    author_id INT NOT NULL,
-    publication_year INT NOT NULL,
-    category_id INT NOT NULL,
-    penalty_rate DECIMAL(5,2) NOT NULL
-);
-"""
     sql_script = st.text_area(
         "SQL Script",
         value=default_sql,
@@ -60,79 +36,106 @@ CREATE TABLE Books (
             st.error(f"Error parsing SQL script: {e}")
             st.session_state["tables_parsed"] = None
 
-    # ----------------------------------------------------------------
+    #
+    # -----------------------------------------------------------
     # STEP 2: Show subsequent configs only if we have parsed tables
-    # ----------------------------------------------------------------
+    # -----------------------------------------------------------
     if st.session_state["tables_parsed"] is not None:
         tables_parsed = st.session_state["tables_parsed"]
 
-        st.write("### Parsed Tables")
+        st.markdown("### Parsed Tables")
         st.json(tables_parsed)
 
-        st.write(
+        # Extended explanation of each configuration section
+        st.markdown(
             """
+            ---
             **Step 2**: Provide your configuration for:
 
-            - `predefined_values`: A dictionary that can specify global or per-table/per-column fixed choices.
-            - `column_type_mappings`: A dictionary that can specify how to fill columns (Faker method, custom lambda, etc.).
-            - `num_rows_per_table`: A dictionary for row counts per table.
-            - A global fallback `num_rows`.
+            1. **`predefined_values`**  
+               A dictionary that can specify global or per-table/per-column fixed choices.
+               You can set arrays of possible values. For example:
+
+               ```
+               {
+                 "global": {
+                   "sex": ["M", "F"]
+                 },
+                 "Categories": {
+                   "category_name": [
+                     "Fiction", "Non-fiction", "Science"
+                   ]
+                 }
+               }
+               ```
+               - **`global`** applies to **every** table or column if it matches.  
+               - Table-specific keys apply only to that table’s columns.
+
+            2. **`column_type_mappings`**  
+               A dictionary that can specify how each column should be filled. You can use:
+               - A **string** with a Faker method name (e.g. `"email"`, `"last_name"`)
+               - A **lambda** (like `"lambda fake, row: fake.date_of_birth()"`)
+               - A custom logic string recognized by your code.
+
+               **Example**:
+               ```
+               {
+                 "global": {
+                   "first_name": "first_name",
+                   "last_name": "last_name",
+                   "email": "email"
+                 },
+                 "Authors": {
+                   "birth_date": "date_of_birth"
+                 }
+               }
+               ```
+
+            3. **`num_rows_per_table`**  
+               A dictionary specifying how many rows to generate **per table**.  
+               **Example**:
+               ```
+               {
+                 "Categories": 10,
+                 "Members": 20,
+                 "Books": 200
+               }
+               ```
+
+            4. **Global `num_rows`**  
+               A fallback value used if a table is *not* listed in `num_rows_per_table`.
+               For example, if `Books` is not in `num_rows_per_table`, we use `num_rows`.
+            ---
             """
         )
 
-        # Show some helper “example” JSON with the actual table/columns commented out
-        # so the user knows the table/column structure. We’ll build a commented “hint.”
+        # Prepare placeholder JSON examples without inline comments
         example_predef = {
             "global": {
                 "sex": ["M", "F"]
-            },
-            # Placeholders for each table & column, so user knows how they might fill it:
+            }
         }
         example_colmap = {
             "global": {
                 "first_name": "first_name",
                 "last_name": "last_name",
                 "email": "email"
-            },
-            # Placeholders for each table & column as well
+            }
         }
         example_numrows = {}
 
-        # Build table-based placeholders
+        # Add empty placeholders for each discovered table
         for tbl_name, tbl_def in tables_parsed.items():
-            # For predefined_values
-            example_predef[tbl_name] = {
-                # "column_name": ["Possible", "Values"],
-            }
-            # For column_type_mappings
-            example_colmap[tbl_name] = {
-                # "column_name": "faker_method_or_lambda"
-            }
-            # For num_rows_per_table
+            example_predef[tbl_name] = {}
+            example_colmap[tbl_name] = {}
             example_numrows[tbl_name] = 10
 
-        # Convert these dicts to strings with JSON, but we’ll place a comment for each column
-        # so the user sees it. We do that by building the JSON, then appending comments.
-        def dict_to_json_with_comments(d, tables_parsed):
-            """
-            Convert the placeholder dict to a JSON string
-            and then append commentary lines with table/column info.
-            """
-            base_json = json.dumps(d, indent=2)
-            lines = base_json.splitlines()
-            lines.append("")
-            lines.append("// Tables & columns discovered:")
-            for tname, tdef in tables_parsed.items():
-                lines.append(f"// Table: {tname}")
-                for col in tdef["columns"]:
-                    lines.append(f"//   - {col['name']}")
-                lines.append("")
-            return "\n".join(lines)
-
-        predef_example_str = dict_to_json_with_comments(example_predef, tables_parsed)
-        colmap_example_str = dict_to_json_with_comments(example_colmap, tables_parsed)
+        # Convert each dictionary to a clean JSON string (no comments)
+        predef_example_str = json.dumps(example_predef, indent=2)
+        colmap_example_str = json.dumps(example_colmap, indent=2)
         numrows_example_str = json.dumps(example_numrows, indent=2)
 
+        # Now the actual text areas where user edits final JSON
         st.subheader("`predefined_values` (JSON)")
         predefined_values_str = st.text_area(
             "Define `predefined_values` as JSON",
@@ -154,6 +157,7 @@ CREATE TABLE Books (
             height=150
         )
 
+        # A final fallback for any unspecified table
         st.subheader("Global Number of Rows (Fallback)")
         global_num_rows = st.number_input(
             "num_rows (used if a table is not specified above)",
@@ -161,9 +165,10 @@ CREATE TABLE Books (
             value=10
         )
 
-        # ----------------------------------------------------------------
+        #
+        # -----------------------------------------------------------
         # STEP 3: GENERATE DATA
-        # ----------------------------------------------------------------
+        # -----------------------------------------------------------
         if st.button("Generate Data"):
             try:
                 # Parse each JSON config
@@ -185,6 +190,7 @@ CREATE TABLE Books (
                     st.error(f"Invalid JSON in num_rows_per_table: {ex}")
                     return
 
+                # Initialize DataGenerator
                 data_generator = DataGenerator(
                     tables=tables_parsed,
                     num_rows=global_num_rows,
