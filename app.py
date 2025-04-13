@@ -36,15 +36,13 @@ class StreamlitLogHandler(logging.Handler):
 
 
 # ----------------------------------------------------------------
-# Configure logging to avoid duplicate logs and propagation
+# Configure logging
 # ----------------------------------------------------------------
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 logger.propagate = False
-
 if not any(isinstance(h, StreamlitLogHandler) for h in logger.handlers):
     logger.addHandler(StreamlitLogHandler())
-
 
 
 def export_files_zip_in_memory(directory: str, pattern: str) -> bytes:
@@ -73,6 +71,9 @@ def export_files_zip_in_memory(directory: str, pattern: str) -> bytes:
 def main():
     st.title("Data Filler Web UI")
 
+    # Clear log messages at the start to avoid duplication
+    st.session_state["log_messages"] = []
+
     # ----------------------------------------------------------------
     # Step 1: SQL Script & Dialect Selection
     # ----------------------------------------------------------------
@@ -95,10 +96,11 @@ def main():
     sql_script = st.text_area("SQL Script", "-- Paste your CREATE TABLE script here", height=250)
 
     if st.button("Parse SQL"):
+        st.session_state["log_messages"] = []  # Clear previous logs on new parse
         try:
             tables_parsed = parse_create_tables(sql_script.strip(), dialect=dialect)
             st.session_state["tables_parsed"] = tables_parsed
-            st.session_state["data_generator"] = None  # Clear previous instance
+            st.session_state["data_generator"] = None  # Clear previous generator
             st.success("SQL script parsed successfully!")
             logger.info("SQL script parsed successfully using dialect '%s'.", dialect)
         except Exception as e:
@@ -112,8 +114,9 @@ def main():
     # ----------------------------------------------------------------
     if st.session_state["tables_parsed"] is not None:
         schema = st.session_state["tables_parsed"]
-        st.markdown("### Parsed Tables")
-        st.json(schema)
+
+        with st.expander("Show Parsed Tables"):
+            st.json(schema)
 
         st.markdown("---")
         st.markdown("## Step 2: Configuration")
@@ -145,18 +148,22 @@ def main():
         guess_mapping = st.checkbox("Enable automatic column mapping guessing", value=False)
         threshold_for_guessing = st.slider("Fuzzy matching threshold", 0.0, 1.0, 0.8) if guess_mapping else 0.8
 
-        # Optionally, a preview button for auto-mappings if desired…
+        # Preview auto-inferred mappings, capture output and display on the page.
         if guess_mapping and st.button("Preview Inferred Mappings"):
             try:
-                # Create a temporary generator instance solely for previewing mappings.
+                from contextlib import redirect_stdout
                 dg_preview = DataGenerator(
                     tables=schema,
                     num_rows=5,
                     guess_column_type_mappings=True,
                     threshold_for_guessing=threshold_for_guessing
                 )
-                st.text("Previewing inferred mappings (5 sample rows per table):")
-                dg_preview.preview_inferred_mappings(num_preview=5)
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    dg_preview.preview_inferred_mappings(num_preview=5)
+                preview_output = buf.getvalue()
+                st.markdown("**Inferred Mappings Preview:**")
+                st.text(preview_output)
                 logger.info("Auto-inferred column mapping preview complete.")
             except Exception as e:
                 st.error(f"Error previewing mappings: {e}")
@@ -169,7 +176,7 @@ def main():
         st.markdown("## Step 3: Generate Data")
         if st.button("Generate Data"):
             try:
-                logger.info("Reading JSON configuration for data generation...")
+                logger.info("Reading user JSON configurations for data generation...")
                 predefined_values = json.loads(predefined_values_str)
                 column_type_mappings = json.loads(column_type_mappings_str)
                 num_rows_per_table = json.loads(num_rows_per_table_str)
@@ -185,7 +192,7 @@ def main():
                 )
 
                 generated_data = dg.generate_data()
-                st.session_state["data_generator"] = dg  # Store the generator instance
+                st.session_state["data_generator"] = dg  # Store instance for export
                 st.success("Data generated successfully!")
                 logger.info("Data generation complete.")
 
@@ -199,16 +206,15 @@ def main():
                 logger.error("Error generating data: %s", e)
 
     # ----------------------------------------------------------------
-    # Step 4: Download Exported Data (only if data generated)
+    # Step 4: Export & Download Data (only if data generated)
     # ----------------------------------------------------------------
     if st.session_state.get("data_generator") is not None:
         st.markdown("---")
         st.markdown("## Step 4: Export & Download Data")
-        # Get the DataGenerator instance from session_state.
         dg_export = st.session_state["data_generator"]
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            # 1) SQL Export
+            # SQL Export
             dg_export.export_data_files(tmpdir, file_type="SQL")
             sql_path = os.path.join(tmpdir, "data_inserts.sql")
             if os.path.exists(sql_path):
@@ -221,7 +227,7 @@ def main():
                     mime="text/plain"
                 )
 
-            # 2) JSON Export (exported per table) -> Zip them
+            # JSON Export -> ZIP
             dg_export.export_data_files(tmpdir, file_type="JSON")
             json_zip_bytes = export_files_zip_in_memory(tmpdir, "*.json")
             st.download_button(
@@ -231,7 +237,7 @@ def main():
                 mime="application/zip"
             )
 
-            # 3) CSV Export (exported per table) -> Zip them
+            # CSV Export -> ZIP
             dg_export.export_data_files(tmpdir, file_type="CSV")
             csv_zip_bytes = export_files_zip_in_memory(tmpdir, "*.csv")
             st.download_button(
@@ -240,16 +246,17 @@ def main():
                 file_name="fake_data_csv.zip",
                 mime="application/zip"
             )
+            logger.info("Data export complete and temporary files cleaned up.")
 
     # ----------------------------------------------------------------
-    # Step 5: Log Output
+    # Step 5: Log Output in an expander
     # ----------------------------------------------------------------
     st.markdown("---")
-    st.markdown("## Log Output")
-    if "log_messages" in st.session_state and st.session_state["log_messages"]:
-        st.text_area("Logs (most recent last)", "\n".join(st.session_state["log_messages"]), height=200)
-    else:
-        st.write("No logs available.")
+    with st.expander("View Log Output"):
+        if "log_messages" in st.session_state and st.session_state["log_messages"]:
+            st.text_area("Logs (most recent last)", "\n".join(st.session_state["log_messages"]), height=200)
+        else:
+            st.write("No logs available.")
 
 
 if __name__ == "__main__":
