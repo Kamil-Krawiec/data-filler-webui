@@ -142,7 +142,8 @@ def main():
         global_num_rows = st.number_input("Global num_rows (fallback if a table is not configured)", min_value=1,
                                           value=10)
 
-        st.subheader("Automatic Column Mapping Guessing")
+        st.subheader("Automatic Column Mapping Guessing! (Experimental) BETA FEATURE - if generating data is long or "
+                     "results in error or empty data, try disabling this feature")
         guess_mapping = st.checkbox("Enable automatic column mapping guessing", value=False)
         threshold_for_guessing = st.slider("Fuzzy matching threshold", 0.0, 1.0, 0.8) if guess_mapping else 0.8
 
