@@ -13,7 +13,7 @@ from filling import DataGenerator
 
 
 # ----------------------------------------------------------------
-# Custom streamlit logger handler to capture log messages
+# Custom Streamlit logger handler to capture log messages
 # ----------------------------------------------------------------
 class StreamlitLogHandler(logging.Handler):
     """
@@ -36,13 +36,11 @@ class StreamlitLogHandler(logging.Handler):
 
 
 # ----------------------------------------------------------------
-# Configure logging
+# Attach our custom handler to the root logger so all modules are covered.
 # ----------------------------------------------------------------
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-logger.propagate = False
-if not any(isinstance(h, StreamlitLogHandler) for h in logger.handlers):
-    logger.addHandler(StreamlitLogHandler())
+root_logger = logging.getLogger()
+if not any(isinstance(h, StreamlitLogHandler) for h in root_logger.handlers):
+    root_logger.addHandler(StreamlitLogHandler())
 
 
 def export_files_zip_in_memory(directory: str, pattern: str) -> bytes:
@@ -71,7 +69,7 @@ def export_files_zip_in_memory(directory: str, pattern: str) -> bytes:
 def main():
     st.title("Data Filler Web UI")
 
-    # Clear log messages at the start to avoid duplication
+    # Clear log messages at the start of each session/parse.
     st.session_state["log_messages"] = []
 
     # ----------------------------------------------------------------
@@ -96,18 +94,18 @@ def main():
     sql_script = st.text_area("SQL Script", "-- Paste your CREATE TABLE script here", height=250)
 
     if st.button("Parse SQL"):
-        st.session_state["log_messages"] = []  # Clear previous logs on new parse
+        st.session_state["log_messages"] = []  # Clear logs on new action
         try:
             tables_parsed = parse_create_tables(sql_script.strip(), dialect=dialect)
             st.session_state["tables_parsed"] = tables_parsed
-            st.session_state["data_generator"] = None  # Clear previous generator
+            st.session_state["data_generator"] = None  # Clear previous instance
             st.success("SQL script parsed successfully!")
-            logger.info("SQL script parsed successfully using dialect '%s'.", dialect)
+            root_logger.info("SQL script parsed successfully using dialect '%s'.", dialect)
         except Exception as e:
             st.session_state["tables_parsed"] = None
             st.session_state["data_generator"] = None
             st.error(f"Error parsing SQL: {e}")
-            logger.error("Error parsing SQL: %s", e)
+            root_logger.error("Error parsing SQL: %s", e)
 
     # ----------------------------------------------------------------
     # Step 2: Configuration Section (only if schema is parsed)
@@ -148,7 +146,6 @@ def main():
         guess_mapping = st.checkbox("Enable automatic column mapping guessing", value=False)
         threshold_for_guessing = st.slider("Fuzzy matching threshold", 0.0, 1.0, 0.8) if guess_mapping else 0.8
 
-        # Preview auto-inferred mappings, capture output and display on the page.
         if guess_mapping and st.button("Preview Inferred Mappings"):
             try:
                 from contextlib import redirect_stdout
@@ -164,10 +161,10 @@ def main():
                 preview_output = buf.getvalue()
                 st.markdown("**Inferred Mappings Preview:**")
                 st.text(preview_output)
-                logger.info("Auto-inferred column mapping preview complete.")
+                root_logger.info("Auto-inferred column mapping preview complete.")
             except Exception as e:
                 st.error(f"Error previewing mappings: {e}")
-                logger.error("Error previewing mappings: %s", e)
+                root_logger.error("Error previewing mappings: %s", e)
 
         # ----------------------------------------------------------------
         # Step 3: Generate Data
@@ -176,11 +173,11 @@ def main():
         st.markdown("## Step 3: Generate Data")
         if st.button("Generate Data"):
             try:
-                logger.info("Reading user JSON configurations for data generation...")
+                root_logger.info("Reading JSON configuration for data generation...")
                 predefined_values = json.loads(predefined_values_str)
                 column_type_mappings = json.loads(column_type_mappings_str)
                 num_rows_per_table = json.loads(num_rows_per_table_str)
-
+                print(guess_mapping)
                 dg = DataGenerator(
                     tables=schema,
                     num_rows=global_num_rows,
@@ -192,9 +189,9 @@ def main():
                 )
 
                 generated_data = dg.generate_data()
-                st.session_state["data_generator"] = dg  # Store instance for export
+                st.session_state["data_generator"] = dg  # Store the instance for export
                 st.success("Data generated successfully!")
-                logger.info("Data generation complete.")
+                root_logger.info("Data generation complete.")
 
                 st.markdown("### Data Preview (first 5 rows per table)")
                 preview_data = {tbl: rows[:5] for tbl, rows in generated_data.items()}
@@ -203,10 +200,10 @@ def main():
             except Exception as e:
                 st.session_state["data_generator"] = None
                 st.error(f"Error generating data: {e}")
-                logger.error("Error generating data: %s", e)
+                root_logger.error("Error generating data: %s", e)
 
     # ----------------------------------------------------------------
-    # Step 4: Export & Download Data (only if data generated)
+    # Step 4: Export & Download Data (only if data is generated)
     # ----------------------------------------------------------------
     if st.session_state.get("data_generator") is not None:
         st.markdown("---")
@@ -246,7 +243,7 @@ def main():
                 file_name="fake_data_csv.zip",
                 mime="application/zip"
             )
-            logger.info("Data export complete and temporary files cleaned up.")
+            root_logger.info("Data export complete. Temporary files cleaned up.")
 
     # ----------------------------------------------------------------
     # Step 5: Log Output in an expander
